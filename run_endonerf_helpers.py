@@ -4,7 +4,6 @@ torch.autograd.set_detect_anomaly(True)
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from torchsearchsorted import searchsorted
 
 
 # Misc
@@ -444,7 +443,7 @@ def importance_sampling_coords(weights, N_samples, det=False, pytest=False):
 
     # Invert CDF
     u = u.contiguous()
-    inds = searchsorted(cdf, u, side='right')
+    inds = torch.searchsorted(cdf, u, right=True)
 
     return inds, u, cdf
 
@@ -477,7 +476,7 @@ def importance_sampling_ray(bins, weights, N_samples, det=False, pytest=False):
 
     # Invert CDF
     u = u.contiguous()
-    inds = searchsorted(cdf, u, side='right')
+    inds = torch.searchsorted(cdf, u, right=True)
 
     below = torch.max(torch.zeros_like(inds-1), inds-1)
     above = torch.min((cdf.shape[-1]-1) * torch.ones_like(inds), inds)
