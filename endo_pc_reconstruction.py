@@ -52,7 +52,13 @@ def generate_rgbd(time, nerf_args, render_poses=None):
 
 def reconstruct_pointcloud(test_time, nerf_args, vis_rgbd=False, depth_filter=None, verbose=True, crop_left_size=0):
     rgb_np, disp_np = generate_rgbd(test_time, nerf_args)
-    depth_np = 1.0 / (disp_np + 1e-6)
+    # EndoNeRF trains with use_depth=True using a custom normalization:
+    #   depth_s = depth_pixel / (inf_depth - close_depth)
+    # so the model disparity encodes a relative depth, NOT standard NDC t.
+    # Correct inverse (matches render_path()'s own formula exactly):
+    #   depth_mm = (1 / disp) * (inf_depth - close_depth)
+    # depth_range_mm is read from close_inf_depth.txt at startup (see __main__).
+    depth_np = (1.0 / (disp_np + 1e-6)) * depth_range_mm  # depth in mm
     
     if crop_left_size > 0:
         rgb_np = rgb_np[:, crop_left_size:, :]
@@ -63,12 +69,19 @@ def reconstruct_pointcloud(test_time, nerf_args, vis_rgbd=False, depth_filter=No
 
     if verbose:
         print('min disp:', disp_np.min(), 'max disp:', disp_np.max())
-        print('min depth:', depth_np.min(), 'max depth:', depth_np.max())
+        print('min depth [mm]:', depth_np.min(), 'max depth [mm]:', depth_np.max())
 
     rgb_im = o3d.geometry.Image(rgb_np.astype(np.uint8))
     depth_im = o3d.geometry.Image(depth_np)
 
-    rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(rgb_im, depth_im, convert_rgb_to_intensity=False)
+    # depth_np is in mm; depth_scale=1.0 keeps raw mm values so PLY coords are mm.
+    # The adapter divides by 1000 in extract_pointcloud_endo() to convert to metres.
+    rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(
+        rgb_im, depth_im,
+        depth_scale=1.0,
+        depth_trunc=1e6,
+        convert_rgb_to_intensity=False,
+    )
 
     if vis_rgbd:
         plt.subplot(1, 2, 1)
@@ -122,6 +135,13 @@ if __name__ == '__main__':
     
     nerf_parser = config_parser()
     nerf_args = nerf_parser.parse_args(f'--config {cfg.config_file}')
+
+    # Read training-time depth normalization scale written by prepare().
+    # nerf_args.datadir is the prepared data directory (basedir is checkpoints).
+    close_inf_path = os.path.join(nerf_args.datadir, 'close_inf_depth.txt')
+    close_depth_mm, inf_depth_mm = np.loadtxt(close_inf_path)
+    depth_range_mm = float(inf_depth_mm - close_depth_mm)
+    print(f'close_inf_depth.txt: close={close_depth_mm:.1f}mm, inf={inf_depth_mm:.1f}mm, scale={depth_range_mm:.1f}mm')
 
     if cfg.reload_ckpt:
         setattr(nerf_args, 'ft_path', os.path.join(nerf_args.basedir, nerf_args.expname, cfg.reload_ckpt))
